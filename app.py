@@ -48,6 +48,7 @@ STATUS_OPTIONS = ["Not Started", "Complete", "Not Applicable"]
 # -------------------------
 if "progress" not in st.session_state:
     st.session_state.progress = load_progress()
+
 if "classes" not in st.session_state:
     st.session_state.classes = load_classes()
 
@@ -60,10 +61,13 @@ st.title("Class Setup Dashboard")
 # SEARCH
 # -------------------------
 search = st.text_input("Search Classes").lower()
-class_names = [c for c in st.session_state.classes if search in c.lower()] if search else list(st.session_state.classes.keys())
+class_names = [
+    c for c in st.session_state.classes
+    if search in c.lower()
+] if search else list(st.session_state.classes.keys())
 
 # -------------------------
-# CSV EXPORT (WORKS EVERYWHERE)
+# EXPORT CSV (SAFE FOR ALL ENVIRONMENTS)
 # -------------------------
 def generate_csv():
     rows = []
@@ -83,11 +87,9 @@ def generate_csv():
             "Visitation Date": data.get("visitation_date", "")
         }
 
-        # Add checklist statuses
         for item in CHECKLIST_ITEMS:
             key = f"{cls}_{item}"
-            status = st.session_state.progress.get(key, {}).get("status", "Not Started")
-            row[item] = status
+            row[item] = st.session_state.progress.get(key, {}).get("status", "Not Started")
 
         rows.append(row)
 
@@ -98,28 +100,31 @@ def generate_csv():
     return output.getvalue()
 
 # -------------------------
-# DOWNLOAD BUTTON
+# EXPORT BUTTON
 # -------------------------
 st.subheader("Export Data")
 
-csv_data = generate_csv()
+csv_file = generate_csv()
 
 st.download_button(
-    label="Download CSV Report (Open in Excel)",
-    data=csv_data,
+    label="Download CSV Report (Excel Compatible)",
+    data=csv_file,
     file_name=f"class_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
     mime="text/csv"
 )
 
 # -------------------------
-# OVERALL PROGRESS
+# OVERALL PROGRESS DASHBOARD
 # -------------------------
 if class_names:
     st.subheader("Overall Class Progress")
 
     def get_date(c):
         try:
-            return datetime.strptime(st.session_state.classes[c].get("start_date",""), "%Y-%m-%d")
+            return datetime.strptime(
+                st.session_state.classes[c].get("start_date",""),
+                "%Y-%m-%d"
+            )
         except:
             return datetime.today()
 
@@ -138,6 +143,7 @@ if class_names:
         color = "#28a745" if pct == 1 else "#ffc107" if pct > 0 else "#dc3545"
 
         st.markdown(f"**{cls} — {data.get('start_date','')}** ({completed}/{total})")
+
         st.markdown(f"""
         <div style="background:#eee;height:20px;border-radius:5px;">
             <div style="width:{pct*100}%;background:{color};height:20px;border-radius:5px;"></div>
@@ -150,6 +156,7 @@ if class_names:
 st.subheader("Add New Class")
 
 with st.form("add_class_form"):
+
     name = st.text_input("Class Name")
     course_code = st.text_input("Course Code and Section Number")
     osfm_portal = st.text_input("OSFM Portal Number")
@@ -190,13 +197,17 @@ with st.form("add_class_form"):
 st.subheader("Delete Classes")
 
 if st.session_state.classes:
-    to_delete = st.multiselect("Select classes", list(st.session_state.classes.keys()))
+    to_delete = st.multiselect(
+        "Select classes",
+        list(st.session_state.classes.keys())
+    )
+
     if st.button("Delete Selected"):
         for cls in to_delete:
             st.session_state.classes.pop(cls, None)
 
         st.session_state.progress = {
-            k:v for k,v in st.session_state.progress.items()
+            k: v for k, v in st.session_state.progress.items()
             if not any(k.startswith(f"{cls}_") for cls in to_delete)
         }
 
@@ -207,18 +218,71 @@ if st.session_state.classes:
         st.rerun()
 
 # -------------------------
-# CLASS CHECKLISTS
+# CLASS CHECKLISTS + FULL CLASS SETUP (RESTORED)
 # -------------------------
 if class_names:
     st.subheader("Class Checklists")
 
     for cls in class_names:
+        data = st.session_state.classes[cls]
+
         with st.expander(cls):
+
+            # -------------------------
+            # CLASS SETUP INFORMATION (RESTORED)
+            # -------------------------
+            st.markdown("### Class Setup Information")
+
+            new_name = st.text_input("Class Name", value=cls, key=f"{cls}_name")
+
+            new_course = st.text_input(
+                "Course Code and Section Number",
+                value=data.get("course_code",""),
+                key=f"{cls}_course"
+            )
+
+            new_osfm = st.text_input(
+                "OSFM Portal Number",
+                value=data.get("osfm_portal",""),
+                key=f"{cls}_osfm"
+            )
+
+            new_inst = st.text_input(
+                "Instructor",
+                value=data.get("instructor",""),
+                key=f"{cls}_inst"
+            )
+
+            col1, col2 = st.columns(2)
+
+            try:
+                start_val = datetime.strptime(data.get("start_date",""), "%Y-%m-%d")
+            except:
+                start_val = datetime.today()
+
+            try:
+                end_val = datetime.strptime(data.get("end_date",""), "%Y-%m-%d")
+            except:
+                end_val = datetime.today()
+
+            new_start = col1.date_input("Start Date", start_val, key=f"{cls}_start")
+            new_end = col2.date_input("End Date", end_val, key=f"{cls}_end")
+
+            new_loc = st.text_input("Location", value=data.get("location",""), key=f"{cls}_loc")
+            new_t1 = st.text_input("Class Times 1", value=data.get("class_time1",""), key=f"{cls}_t1")
+            new_t2 = st.text_input("Class Times 2", value=data.get("class_time2",""), key=f"{cls}_t2")
+            new_comm = st.text_area("Comments", value=data.get("comments",""), key=f"{cls}_comm")
+
+            # -------------------------
+            # CHECKLIST
+            # -------------------------
+            st.markdown("### Checklist")
+
             for item in CHECKLIST_ITEMS:
                 key = f"{cls}_{item}"
 
                 if key not in st.session_state.progress:
-                    st.session_state.progress[key] = {"status":"Not Started"}
+                    st.session_state.progress[key] = {"status": "Not Started"}
 
                 val = st.session_state.progress[key]["status"]
 
@@ -226,10 +290,64 @@ if class_names:
                     item,
                     STATUS_OPTIONS,
                     index=STATUS_OPTIONS.index(val),
-                    key=key
+                    key=f"{key}_status"
                 )
 
                 st.session_state.progress[key]["status"] = new_status
+
+                # Visitation logic
+                if item == "Class Visitation":
+                    if new_status == "Complete":
+                        visit_date = st.date_input(
+                            "Visitation Date",
+                            value=datetime.strptime(
+                                data.get("visitation_date","") or datetime.today().strftime("%Y-%m-%d"),
+                                "%Y-%m-%d"
+                            ),
+                            key=f"{cls}_visit"
+                        )
+                        st.session_state.classes[cls]["visitation_date"] = visit_date.strftime("%Y-%m-%d")
+                    else:
+                        st.session_state.classes[cls]["visitation_date"] = ""
+
+            # -------------------------
+            # SAVE BUTTON
+            # -------------------------
+            if st.button(f"Save {cls}", key=f"{cls}_save"):
+
+                final_name = new_name.strip()
+
+                # rename class if needed
+                if final_name and final_name != cls:
+                    st.session_state.classes[final_name] = st.session_state.classes.pop(cls)
+
+                    new_progress = {}
+                    for k, v in st.session_state.progress.items():
+                        if k.startswith(f"{cls}_"):
+                            new_progress[k.replace(f"{cls}_", f"{final_name}_", 1)] = v
+                        else:
+                            new_progress[k] = v
+
+                    st.session_state.progress = new_progress
+                    cls = final_name
+
+                st.session_state.classes[cls].update({
+                    "course_code": new_course,
+                    "osfm_portal": new_osfm,
+                    "start_date": new_start.strftime("%Y-%m-%d"),
+                    "end_date": new_end.strftime("%Y-%m-%d"),
+                    "instructor": new_inst,
+                    "location": new_loc,
+                    "class_time1": new_t1,
+                    "class_time2": new_t2,
+                    "comments": new_comm
+                })
+
+                save_classes(st.session_state.classes)
+                save_progress(st.session_state.progress)
+
+                st.success(f"Updated {cls}")
+                st.rerun()
 
     save_progress(st.session_state.progress)
 
