@@ -55,7 +55,7 @@ if "classes" not in st.session_state:
 # -------------------------
 # HEADER
 # -------------------------
-st.title("Class Setup Dashboard")
+st.title("Stanly Community College Class Setup Dashboard")
 
 # -------------------------
 # SEARCH
