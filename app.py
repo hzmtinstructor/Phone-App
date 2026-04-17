@@ -7,29 +7,36 @@ from io import StringIO
 
 DATA_FILE = "progress.json"
 CLASS_FILE = "classes.json"
+AUDIT_FILE = "audit.json"
 
 # -------------------------
 # LOAD / SAVE
 # -------------------------
-def load_progress():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
+def load_json(file):
+    if os.path.exists(file):
+        with open(file, "r") as f:
             return json.load(f)
     return {}
 
-def save_progress(data):
-    with open(DATA_FILE, "w") as f:
+def save_json(file, data):
+    with open(file, "w") as f:
         json.dump(data, f)
 
-def load_classes():
-    if os.path.exists(CLASS_FILE):
-        with open(CLASS_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-def save_classes(data):
-    with open(CLASS_FILE, "w") as f:
-        json.dump(data, f)
+# -------------------------
+# AUDIT LOGGING
+# -------------------------
+def log_change(cls, field, old, new):
+    if old == new:
+        return
+    audit = load_json(AUDIT_FILE)
+    audit.setdefault("history", []).append({
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "class": cls,
+        "field": field,
+        "old_value": old,
+        "new_value": new
+    })
+    save_json(AUDIT_FILE, audit)
 
 # -------------------------
 # CONSTANTS
@@ -47,10 +54,10 @@ STATUS_OPTIONS = ["Not Started", "Complete", "Not Applicable"]
 # STATE
 # -------------------------
 if "progress" not in st.session_state:
-    st.session_state.progress = load_progress()
+    st.session_state.progress = load_json(DATA_FILE)
 
 if "classes" not in st.session_state:
-    st.session_state.classes = load_classes()
+    st.session_state.classes = load_json(CLASS_FILE)
 
 # -------------------------
 # HEADER
@@ -61,74 +68,44 @@ st.title("Stanly Community College Class Setup Dashboard")
 # SEARCH
 # -------------------------
 search = st.text_input("Search Classes").lower()
-class_names = [
-    c for c in st.session_state.classes
-    if search in c.lower()
-] if search else list(st.session_state.classes.keys())
+class_names = [c for c in st.session_state.classes if search in c.lower()] if search else list(st.session_state.classes.keys())
 
 # -------------------------
-# EXPORT CSV (SAFE FOR ALL ENVIRONMENTS)
+# EXPORTS
 # -------------------------
 def generate_csv():
     rows = []
-
     for cls, data in st.session_state.classes.items():
-        row = {
-            "Class Name": cls,
-            "Course Code": data.get("course_code", ""),
-            "OSFM Portal": data.get("osfm_portal", ""),
-            "Instructor": data.get("instructor", ""),
-            "Start Date": data.get("start_date", ""),
-            "End Date": data.get("end_date", ""),
-            "Location": data.get("location", ""),
-            "Class Time 1": data.get("class_time1", ""),
-            "Class Time 2": data.get("class_time2", ""),
-            "Comments": data.get("comments", ""),
-            "Visitation Date": data.get("visitation_date", "")
-        }
-
+        row = {"Class Name": cls, **data}
         for item in CHECKLIST_ITEMS:
             key = f"{cls}_{item}"
             row[item] = st.session_state.progress.get(key, {}).get("status", "Not Started")
-
         rows.append(row)
 
     df = pd.DataFrame(rows)
-
     output = StringIO()
     df.to_csv(output, index=False)
     return output.getvalue()
 
-# -------------------------
-# EXPORT BUTTON
-# -------------------------
+def generate_audit_csv():
+    audit = load_json(AUDIT_FILE)
+    df = pd.DataFrame(audit.get("history", []))
+    output = StringIO()
+    df.to_csv(output, index=False)
+    return output.getvalue()
+
 st.subheader("Export Data")
 
-csv_file = generate_csv()
-
-st.download_button(
-    label="Download CSV Report (Excel Compatible)",
-    data=csv_file,
-    file_name=f"class_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-    mime="text/csv"
-)
+st.download_button("Download Class Report", generate_csv(), "class_report.csv")
+st.download_button("Download Audit History", generate_audit_csv(), "audit_history.csv")
 
 # -------------------------
-# OVERALL PROGRESS DASHBOARD
+# PROGRESS DASHBOARD
 # -------------------------
 if class_names:
     st.subheader("Overall Class Progress")
 
-    def get_date(c):
-        try:
-            return datetime.strptime(
-                st.session_state.classes[c].get("start_date",""),
-                "%Y-%m-%d"
-            )
-        except:
-            return datetime.today()
-
-    for cls in sorted(class_names, key=get_date):
+    for cls in class_names:
         data = st.session_state.classes[cls]
 
         completed = sum(
@@ -151,15 +128,14 @@ if class_names:
         """, unsafe_allow_html=True)
 
 # -------------------------
-# ADD NEW CLASS
+# ADD CLASS
 # -------------------------
 st.subheader("Add New Class")
 
 with st.form("add_class_form"):
-
     name = st.text_input("Class Name")
-    course_code = st.text_input("Course Code and Section Number")
-    osfm_portal = st.text_input("OSFM Portal Number")
+    course_code = st.text_input("Course Code")
+    osfm_portal = st.text_input("OSFM Portal")
     instructor = st.text_input("Instructor")
 
     col1, col2 = st.columns(2)
@@ -169,11 +145,9 @@ with st.form("add_class_form"):
     location = st.text_input("Location")
     class_time1 = st.text_input("Class Times 1")
     class_time2 = st.text_input("Class Times 2")
-    comments = st.text_area("Comments", height=100)
+    comments = st.text_area("Comments")
 
-    submitted = st.form_submit_button("Add Class")
-
-    if submitted and name:
+    if st.form_submit_button("Add Class") and name:
         st.session_state.classes[name] = {
             "course_code": course_code,
             "osfm_portal": osfm_portal,
@@ -187,38 +161,13 @@ with st.form("add_class_form"):
             "visitation_date": ""
         }
 
-        save_classes(st.session_state.classes)
-        st.success(f"Added class: {name}")
+        log_change(name, "Class Created", "", "New Class")
+
+        save_json(CLASS_FILE, st.session_state.classes)
         st.rerun()
 
 # -------------------------
-# DELETE CLASSES
-# -------------------------
-st.subheader("Delete Classes")
-
-if st.session_state.classes:
-    to_delete = st.multiselect(
-        "Select classes",
-        list(st.session_state.classes.keys())
-    )
-
-    if st.button("Delete Selected"):
-        for cls in to_delete:
-            st.session_state.classes.pop(cls, None)
-
-        st.session_state.progress = {
-            k: v for k, v in st.session_state.progress.items()
-            if not any(k.startswith(f"{cls}_") for cls in to_delete)
-        }
-
-        save_classes(st.session_state.classes)
-        save_progress(st.session_state.progress)
-
-        st.success("Deleted")
-        st.rerun()
-
-# -------------------------
-# CLASS CHECKLISTS + FULL CLASS SETUP (RESTORED)
+# CLASS DETAILS + CHECKLIST (FULLY RESTORED)
 # -------------------------
 if class_names:
     st.subheader("Class Checklists")
@@ -228,54 +177,22 @@ if class_names:
 
         with st.expander(cls):
 
-            # -------------------------
-            # CLASS SETUP INFORMATION (RESTORED)
-            # -------------------------
             st.markdown("### Class Setup Information")
 
-            new_name = st.text_input("Class Name", value=cls, key=f"{cls}_name")
-
-            new_course = st.text_input(
-                "Course Code and Section Number",
-                value=data.get("course_code",""),
-                key=f"{cls}_course"
-            )
-
-            new_osfm = st.text_input(
-                "OSFM Portal Number",
-                value=data.get("osfm_portal",""),
-                key=f"{cls}_osfm"
-            )
-
-            new_inst = st.text_input(
-                "Instructor",
-                value=data.get("instructor",""),
-                key=f"{cls}_inst"
-            )
+            new_name = st.text_input("Class Name", cls, key=f"{cls}_name")
+            new_course = st.text_input("Course Code", data.get("course_code",""), key=f"{cls}_course")
+            new_osfm = st.text_input("OSFM Portal", data.get("osfm_portal",""), key=f"{cls}_osfm")
+            new_inst = st.text_input("Instructor", data.get("instructor",""), key=f"{cls}_inst")
 
             col1, col2 = st.columns(2)
+            new_start = col1.date_input("Start Date", datetime.today(), key=f"{cls}_start")
+            new_end = col2.date_input("End Date", datetime.today(), key=f"{cls}_end")
 
-            try:
-                start_val = datetime.strptime(data.get("start_date",""), "%Y-%m-%d")
-            except:
-                start_val = datetime.today()
+            new_loc = st.text_input("Location", data.get("location",""), key=f"{cls}_loc")
+            new_t1 = st.text_input("Class Times 1", data.get("class_time1",""), key=f"{cls}_t1")
+            new_t2 = st.text_input("Class Times 2", data.get("class_time2",""), key=f"{cls}_t2")
+            new_comm = st.text_area("Comments", data.get("comments",""), key=f"{cls}_comm")
 
-            try:
-                end_val = datetime.strptime(data.get("end_date",""), "%Y-%m-%d")
-            except:
-                end_val = datetime.today()
-
-            new_start = col1.date_input("Start Date", start_val, key=f"{cls}_start")
-            new_end = col2.date_input("End Date", end_val, key=f"{cls}_end")
-
-            new_loc = st.text_input("Location", value=data.get("location",""), key=f"{cls}_loc")
-            new_t1 = st.text_input("Class Times 1", value=data.get("class_time1",""), key=f"{cls}_t1")
-            new_t2 = st.text_input("Class Times 2", value=data.get("class_time2",""), key=f"{cls}_t2")
-            new_comm = st.text_area("Comments", value=data.get("comments",""), key=f"{cls}_comm")
-
-            # -------------------------
-            # CHECKLIST
-            # -------------------------
             st.markdown("### Checklist")
 
             for item in CHECKLIST_ITEMS:
@@ -284,54 +201,32 @@ if class_names:
                 if key not in st.session_state.progress:
                     st.session_state.progress[key] = {"status": "Not Started"}
 
-                val = st.session_state.progress[key]["status"]
+                old_status = st.session_state.progress[key]["status"]
 
                 new_status = st.selectbox(
                     item,
                     STATUS_OPTIONS,
-                    index=STATUS_OPTIONS.index(val),
+                    index=STATUS_OPTIONS.index(old_status),
                     key=f"{key}_status"
                 )
 
+                if new_status != old_status:
+                    log_change(cls, item, old_status, new_status)
+
                 st.session_state.progress[key]["status"] = new_status
 
-                # Visitation logic
                 if item == "Class Visitation":
                     if new_status == "Complete":
-                        visit_date = st.date_input(
-                            "Visitation Date",
-                            value=datetime.strptime(
-                                data.get("visitation_date","") or datetime.today().strftime("%Y-%m-%d"),
-                                "%Y-%m-%d"
-                            ),
-                            key=f"{cls}_visit"
-                        )
+                        visit_date = st.date_input("Visitation Date", datetime.today(), key=f"{cls}_visit")
                         st.session_state.classes[cls]["visitation_date"] = visit_date.strftime("%Y-%m-%d")
-                    else:
-                        st.session_state.classes[cls]["visitation_date"] = ""
 
-            # -------------------------
-            # SAVE BUTTON
-            # -------------------------
-            if st.button(f"Save {cls}", key=f"{cls}_save"):
+            if st.button(f"Save {cls}"):
 
-                final_name = new_name.strip()
+                # rename logic
+                if new_name != cls:
+                    st.session_state.classes[new_name] = st.session_state.classes.pop(cls)
 
-                # rename class if needed
-                if final_name and final_name != cls:
-                    st.session_state.classes[final_name] = st.session_state.classes.pop(cls)
-
-                    new_progress = {}
-                    for k, v in st.session_state.progress.items():
-                        if k.startswith(f"{cls}_"):
-                            new_progress[k.replace(f"{cls}_", f"{final_name}_", 1)] = v
-                        else:
-                            new_progress[k] = v
-
-                    st.session_state.progress = new_progress
-                    cls = final_name
-
-                st.session_state.classes[cls].update({
+                st.session_state.classes[new_name].update({
                     "course_code": new_course,
                     "osfm_portal": new_osfm,
                     "start_date": new_start.strftime("%Y-%m-%d"),
@@ -343,13 +238,8 @@ if class_names:
                     "comments": new_comm
                 })
 
-                save_classes(st.session_state.classes)
-                save_progress(st.session_state.progress)
+                save_json(CLASS_FILE, st.session_state.classes)
+                save_json(DATA_FILE, st.session_state.progress)
 
-                st.success(f"Updated {cls}")
+                st.success(f"Updated {new_name}")
                 st.rerun()
-
-    save_progress(st.session_state.progress)
-
-else:
-    st.info("No classes found")
